@@ -1,7 +1,7 @@
 """
     基于qq频道机器人的一个聊天机器人
     前置库:
-        qq-botpy, revChatGPT, easy_ernie, bardapi
+        qq-botpy, revChatGPT, easy_ernie, bardapi, revTongYi
 """
 import json
 import os
@@ -12,7 +12,8 @@ import botpy
 from bardapi import Bard, SESSION_HEADERS
 from botpy.message import *
 from easy_ernie import Ernie
-from revChatGPT.V1 import Chatbot
+# from revChatGPT.V1 import Chatbot
+import revTongYi.qianwen as qianwenbot
 
 
 # 创建数据文件
@@ -44,6 +45,9 @@ if not os.path.isfile("./config.json"):
                 "__Secure-1PSIDCC": "",
                 "__Secure-1PSIDTS": ""
             },
+            "Qianwen": {
+                "cookies_str":""
+            },
             "allowed_channels": [],
             "proxies": {}
         }, fp)
@@ -65,13 +69,13 @@ def save():
 
 
 # 模型列表
-models = ["chatGPT", "文心一言", "Bard"]
+models = ["chatGPT","文心一言", "Bard", "通义千问"]
 
 # 模型初始化
 ernie = Ernie(BAIDUID=cfg["Ernie"].get("BAIDUUID"),
               BDUSS_BFESS=cfg["Ernie"].get("BDUSS_BFESS"))
 
-chatbot = Chatbot(config={"access_token": cfg["ChatGPT"].get("access_token")})
+# chatbot = Chatbot(config={"access_token": cfg["ChatGPT"].get("access_token")})
 
 bard_session = requests.Session()
 bard_token = cfg["Bard"].get("__Secure-1PSID")
@@ -85,22 +89,25 @@ bard = Bard(
     proxies=cfg.get("proxies")
 )
 
+qianwen = qianwenbot.Chatbot(
+    cookies_str = cfg["Qianwen"].get("cookies_str")
+)
 
 # 初始化子频道
 def channel_init(guild_id, channel_id):
     global dt
     channel = dt["public"][guild_id][channel_id]
     try:
-        if not channel.get("chatGPT"):
-            # GPT
-            channel["chatGPT"] = {}
-            chatbot.reset_chat()
-            resp = ''
-            for data in chatbot.ask(
-                    "你好"
-            ):
-                resp = data
-            channel["chatGPT"]["cv_id"] = resp.get('conversation_id')
+        # if not channel.get("chatGPT"):
+        #     # GPT
+        #     channel["chatGPT"] = {}
+        #     chatbot.reset_chat()
+        #     resp = ''
+        #     for data in chatbot.ask(
+        #             "你好"
+        #     ):
+        #         resp = data
+        #     channel["chatGPT"]["cv_id"] = resp.get('conversation_id')
 
         if not channel.get("ernie"):
             # yiyan
@@ -114,26 +121,33 @@ def channel_init(guild_id, channel_id):
             channel["Bard"] = {}
             cid = bard.get_answer("你好").get("conversation_id")
             channel["Bard"]["cid"] = cid
+        if not channel.get("Qianwen"):
+            channel["Qianwen"] = {}
+            resp = qianwen.ask("你好")
+            sessionId = resp.get("sessionId")
+            msgId = resp.get("msgId")
+            channel["Qianwen"]["sessionId"] = sessionId
+            channel["Qianwen"]["msgId"] = msgId
 
     except:
         print(traceback.format_exc())
     save()
 
 
-def ask_gpt(message: str, info: list):
-    try:
-        cv_id = dt[info[0]][info[1]][info[2]]["chatGPT"]["cv_id"]
-        resp = ''
-        for data in chatbot.ask(
-                prompt=message,
-                conversation_id=cv_id
-        ):
-            resp = data
-        print(resp)
-        return resp["message"]
-    except:
-        print(traceback.format_exc())
-        return "发生错误"
+# def ask_gpt(message: str, info: list):
+#     try:
+#         cv_id = dt[info[0]][info[1]][info[2]]["chatGPT"]["cv_id"]
+#         resp = ''
+#         for data in chatbot.ask(
+#                 prompt=message,
+#                 conversation_id=cv_id
+#         ):
+#             resp = data
+#         print(resp)
+#         return resp["message"]
+#     except:
+#         print(traceback.format_exc())
+#         return "发生错误"
 
 
 def ask_ernie(message: str, info: list):
@@ -176,6 +190,19 @@ def ask_bard(message: Message, message_text: str, info: list):
         print(traceback.format_exc())
         return "发生错误"
 
+def ask_qianwen(message_text: str, info: list):
+    try:
+        global qianwen
+        sessionId = dt[info[0]][info[1]][info[2]]["Qianwen"]["sessionId"]
+        msgId = dt[info[0]][info[1]][info[2]]["Qianwen"]["msgId"]
+        qianwen.sessionId = sessionId
+        resp = qianwen.ask(prompt=message_text, parentId=msgId)
+        print(resp)
+        dt[info[0]][info[1]][info[2]]["Qianwen"]["msgId"] = resp["msgId"]
+        return resp["content"][0]
+    except:
+        print(traceback.format_exc())
+        return "发生错误"
 
 # 消息处理
 class MyClient(botpy.Client):
@@ -207,7 +234,8 @@ class MyClient(botpy.Client):
                 if message_text[0] != "/":
                     # 正常问题
                     if model_type == 0:
-                        repl_text = ask_gpt(message_text, ["public", guild_id, channel_id])
+                        ...
+                        # repl_text = ask_gpt(message_text, ["public", guild_id, channel_id])
                     elif model_type == 1:
                         repl = ask_ernie(message_text, ["public", guild_id, channel_id])
                         repl_text = repl[0]
@@ -215,12 +243,14 @@ class MyClient(botpy.Client):
                             img_url = repl[1][0]
                     elif model_type == 2:
                         repl_text = ask_bard(message, message_text, ["public", guild_id, channel_id])
+                    elif model_type == 3:
+                        repl_text = ask_qianwen(message_text, ["public", guild_id, channel_id])
                 else:
                     # 指令
                     cmd_text = message_text.replace("/", "")
                     cmd_args = cmd_text.split()
                     if cmd_args[0] == "切换模型":
-                        model_type = (model_type + 1 if model_type < 2 else 0)
+                        model_type = (model_type + 1 if model_type < 3 else 1)
                         dt_public[guild_id][channel_id]["type"] = model_type
                         save()
                         repl_text = "本子频道模型已切换为：" + models[model_type]
